@@ -47,17 +47,20 @@ spec:
       description: The Cloud Object Storage Bucket name where build artifact will be stored
     - name: inventory-repo
       description: The variable storing git integration for the repository storing build inventory with the toolchain
-    - name: pipeline-repo
-      description: The variable storing git integration for the repository storing build pipeline code for the toolchain      
+    - name: scripts-repo
+      description: The variable storing git integration for the repository storing build application code for the toolchain      
     - name: cos-region
       description: The Region where Cloud Object Storage Instance is created
     - name: cos-api-key
       description: The API Key to interact with the Cloud Object Storage Instance
     - name: insights
       description: The variable storing DevOps Insight integration with the toolchain
-    - name: runtime
-      description: The variable storing language runtime
-      default: "java"     
+    - name: scripts-subpath
+      description: TThe subpath to the scripts repo from root
+    - name: scripts-repo-branch
+      description: The branch of the scripts-repo
+    - name: inventory-repo-branch
+      description: The branch of the inventory-repo   
   workspaces:
     - name: pipeline-ws
   tasks:
@@ -81,8 +84,8 @@ spec:
           value: credentials.json          
       workspaces:
         - name: output
-          workspace: pipeline-ws
-    - name: git-clone-pipeline-repo
+          workspace: pipeline-ws 
+    - name: git-clone-scripts-repo
       taskRef:
         name: git-clone-repo
       runAfter:
@@ -93,11 +96,11 @@ spec:
         - name: ibmcloud-apikey-secret-key
           value: "apikey"
         - name: repository
-          value: $(params.pipeline-repo)
+          value: $(params.scripts-repo)
         - name: branch
-          value: $(params.branch)
+          value: $(params.scripts-repo-branch) 
         - name: revision
-          value: $(params.revision)
+          value: $(params.scripts-repo-branch) 
         - name: pipeline-debug
           value: $(params.pipeline-debug)
         - name: git-credentials-json-file
@@ -105,18 +108,24 @@ spec:
       workspaces:
         - name: output
           workspace: pipeline-ws
-          subpath: pipeline-repo    
+          subpath: scripts-repo    
     - name: build-source
       runAfter:
-        - git-clone-pipeline-repo
+        - git-clone-scripts-repo
       taskRef:
         name: toolchain-build
       params:
         - name: custom-script
           value: |
-            #!/bin/bash            
+            #!/bin/bash
+            # Your build script should go here.
+            # Existing template utilizes a Maven Based Java Application and hence the build steps utilizes maven mvn wrapper to build the Java Archive
+            # Incase your application is Java/Go based where the deployment unit comprises of a binary you may need to modify the lines below to cater
+            # to the needs of your build system. For interpreter based project (Python/JS), where the application needs only the source code, you may
+            # skip this step or comment out the existing lines and move over to copy the contents to /artifacts/binaries folder.            
             echo "Running Application Source Code Build Script"
-            source ./pipeline-repo/scripts/$(params.runtime)/build.sh
+            subpath="$(params.scripts-subpath)"
+            source ./scripts-repo/${subpath}/build.sh
       workspaces:
         - name: output
           workspace: pipeline-ws
@@ -206,7 +215,7 @@ spec:
         - name: artifacts
           workspace: pipeline-ws
         - name: secrets
-          workspace: pipeline-ws          
+          workspace: pipeline-ws  
       params:
         - name: repository
           value: $(tasks.git-clone-application-repo.results.git-repository)
@@ -231,12 +240,13 @@ spec:
         name: tester-run-tests
       runAfter: 
         - build-source
-      params:
+      params: 
         - name: tests-script
           value: |
             #!/bin/bash            
             echo "Running Unit Test Script"
-            source ./pipeline-repo/scripts/$(params.runtime)/unit-tests.sh
+            subpath="$(params.scripts-subpath)"
+            source ./scripts-repo/${subpath}/unit-tests.sh
 
             # Publish the results of the unit tests as result of this task.
             # This result helps the downstream task (for eg. DevOps Insight) to ingest the result.
@@ -256,8 +266,8 @@ spec:
           value: |
             #!/bin/bash            
             echo "Running Code Coverage Script"
-            source ./pipeline-repo/scripts/$(params.runtime)/code-coverage.sh
-
+            subpath="$(params.scripts-subpath)"
+            source ./scripts-repo/${subpath}/code-coverage.sh
             # Publish the results of the code coverage as result of this task.
             # This result helps the downstream task (for eg. DevOps Insight) to ingest the result.
             echo $CODE_COVERAGE_RESULTS_LOC
@@ -275,10 +285,11 @@ spec:
         - name: custom-script
           value: |
             #!/bin/bash
-            source ./pipeline-repo/scripts/$(params.runtime)/package-build.sh
+            subpath="$(params.scripts-subpath)"
+            source ./scripts-repo/${subpath}/package-build.sh
       workspaces:
         - name: output
-          workspace: pipeline-ws          
+          workspace: pipeline-ws         
     - name: build-artifacts-info
       runAfter: 
         - package-build-artifacts
@@ -289,11 +300,11 @@ spec:
           value: $(params.repository)
         - name: appname
           value: $(params.app-name)
-        - name: runtime
-          value: $(params.runtime)                            
+        - name: scripts-subpath
+          value: $(params.scripts-subpath)                            
       workspaces:
         - name: output
-          workspace: pipeline-ws
+          workspace: pipeline-ws      
     - name: publish-doi-buildrecord
       runAfter: 
         - build-artifacts-info
@@ -421,7 +432,9 @@ spec:
         - name: repository
           value: $(params.inventory-repo)
         - name: branch
-          value: "master"
+          value: $(params.inventory-repo-branch) 
+        - name: revision
+          value: $(params.inventory-repo-branch) 
         - name: pipeline-debug
           value: $(params.pipeline-debug)
         - name: git-credentials-json-file

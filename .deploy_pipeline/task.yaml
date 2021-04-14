@@ -152,8 +152,8 @@ spec:
       description: The variable storing git integration for the repository storing build inventory with the toolchain
     - name: objectname
       description: The name of the build artifact
-    - name: runtime
-      description: The application lanugage runtime       
+    - name: scripts-subpath
+      description: The application lanugage scripts-subpath       
   workspaces:
     - name: output
       description: A workspace
@@ -193,13 +193,28 @@ spec:
           value: $(params.inventory-repo)
         - name: OBJECTNAME
           value: $(params.objectname)
-        - name: RUNTIME
-          value: $(params.runtime)  
+        - name: scripts-subpath
+          value: $(params.scripts-subpath)
+        - name: FILE
+          value: inventory.json
       script: |
         #!/bin/bash
+        # This step logs into the Virtual Server Instance based on the credentials provided during the Toolchain creation.
+        # The step: 
+        #   - Assumes that the upstream task has already downloaded the artifact to the /output location 
+        #   - Carries out all the operation within the home directory of the user i.e. /home/${HOST_USER_NAME}
+        #   - Copies the artifact from the /output to /home/${HOST_USER_NAME}/app which is defined as WORKDIR
+        #   - Runs the deploy.sh file as created in the previous step to carry out the step-by-step deployment which may include start/stop of application.
+        cd /output/inventory-repo;          
+        if [[ -f "$FILE" ]]; then
+          PIPELINERUNID=$(cat $FILE |jq -r '.pipeline_run_id')
+        fi
+
+        cd /output
         WORKDIR=/home/${HOST_USER_NAME}/app
         BACKUPDIR=${WORKDIR}_backup
-        source ./pipeline-repo/scripts/${RUNTIME}/setup-remote-deploy.sh
+        subpath="$(params.scripts-subpath)"
+        source ./scripts-repo/${subpath}/setup-remote-deploy.sh
 ---
 apiVersion: tekton.dev/v1beta1
 kind: Task
@@ -211,8 +226,8 @@ spec:
       description: The IP Address of the Virtual Server Instance
     - name: inventory-repo
       description: The variable storing git integration for the repository storing build inventory with the toolchain
-    - name: runtime
-      description: The application lanugage runtime       
+    - name: scripts-subpath
+      description: The subpath to the scripts 
   workspaces:
     - name: output
       description: A workspace
@@ -226,12 +241,12 @@ spec:
           value: $(params.virtualserverinstance)
         - name: INVENTORY_REPO
           value: $(params.inventory-repo)
-        - name: RUNTIME
-          value: $(params.runtime)            
+        - name: scripts-subpath
+          value: $(params.scripts-subpath)            
       script: |
         #!/bin/bash
-        source ./pipeline-repo/scripts/${RUNTIME}/health-check.sh
-
+        subpath="$(params.scripts-subpath)"
+        source ./scripts-repo/${subpath}/health-check.sh
 ---
 apiVersion: tekton.dev/v1beta1
 kind: Task
@@ -243,8 +258,8 @@ spec:
       description: The IP Address of the Virtual Server Instance
     - name: inventory-repo
       description: The variable storing git integration for the repository storing build inventory with the toolchain
-    - name: runtime
-      description: The application lanugage runtime       
+    - name: scripts-subpath
+      description: The subpath to the script repo from root    
   workspaces:
     - name: output
       description: A workspace
@@ -258,11 +273,12 @@ spec:
           value: $(params.virtualserverinstance)
         - name: INVENTORY_REPO
           value: $(params.inventory-repo)
-        - name: RUNTIME
-          value: $(params.runtime)            
+        - name: scripts-subpath
+          value: $(params.scripts-subpath)            
       script: |
         #!/bin/bash
-        source ./pipeline-repo/scripts/${RUNTIME}/acceptance-tests.sh
+        subpath="$(params.scripts-subpath)"
+        source ./scripts-repo/${subpath}/acceptance-tests.sh
 ---
 apiVersion: tekton.dev/v1beta1
 kind: Task
@@ -286,8 +302,8 @@ spec:
       description: The health check status whether Failed|Passed
     - name: acceptanceCheckStatus
       description: The acceptance check status whether Failed|Passed
-    - name: runtime
-      description: The application lanugage runtime        
+    - name: scripts-subpath
+      description: The subpath to the script repo from root      
   workspaces:
     - name: output
       description: A workspace
@@ -317,16 +333,18 @@ spec:
           value: $(params.healthCheckStatus)
         - name: ACCEPTANCE_TEST_STATUS
           value: $(params.acceptanceCheckStatus)
-        - name: RUNTIME
-          value: $(params.runtime) 
+        - name: scripts-subpath
+          value: $(params.scripts-subpath) 
       script: |
         #!/bin/bash
         echo "DEPLOY_STATUS=$DEPLOY_STATUS"
         echo "HEALTH_CHECK_STATUS=$HEALTH_CHECK_STATUS"
         echo "ACCEPTANCE_TEST_STATUS=$ACCEPTANCE_TEST_STATUS"
+        subpath="$(params.scripts-subpath)"
         if [ $DEPLOY_STATUS == "Failed" ] || [ $HEALTH_CHECK_STATUS == "Failed"  ] || [ $ACCEPTANCE_TEST_STATUS == "Failed"  ]; then
-          source ./pipeline-repo/scripts/${RUNTIME}/rollback-deploy.sh
+          source ./scripts-repo/${subpath}/rollback-deploy.sh
         else
+          source ./scripts-repo/${subpath}/perform-cleanup.sh
           echo "All Checks Passed. Roll Back Not required."
         fi
 ---
